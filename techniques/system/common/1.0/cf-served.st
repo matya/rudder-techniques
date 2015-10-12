@@ -98,7 +98,7 @@ bundle common def
         string  => translatepath("${sys.workdir}/policy_server.dat"),
         comment => "Path to file containing address to policy server";
 
-   # Use localhost as default policy_server if no policy_server.dat exists
+   # Use localhost as defapolicy_server::ult policy_server if no policy_server.dat exists
     policy_server_set::
       "policy_server"
         string  => readfile("${policy_server_file}", 2048),
@@ -118,7 +118,7 @@ bundle common def
     policy_server::
       "acl" slist => {
       "127.0.0.0/8" , "::1",
-      "${def.policy_server}", # the policy server can connect to a relay
+      host2ip("${def.policy_server}"), # the policy server can connect to a relay
       &AUTHORIZED_NETWORKS:{net|"&net&",}&
     };
 &endif&
