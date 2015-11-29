@@ -143,6 +143,11 @@ bundle agent update_action
 {
   vars:
       "client_inputs"        string => "${sys.workdir}/inputs";  #where to put the files on the client when downloaded
+
+      # Tools to copy - all defined in bundle g + the timestamp file (for our two phase update needs, see below)
+      "rudder_tools_files_to_copy"      slist => { "${g.rudder_tools_updated_filename}", @{g.rudder_tools_files} }, policy => "ifdefined";
+      "rudder_tools_files_to_select"    slist => maplist("${g.rudder_tools_origin}/${this}", @{rudder_tools_files_to_copy}); # file_select needs full path
+
       "file_to_check_update" string => "rudder_promises_generated";
     nova_edition::
       "server_inputs"        string => "${server_info.policy_files}/rules/cfengine-nova"; #actual directory with promises
@@ -168,7 +173,7 @@ bundle agent update_action
 
       "${g.rudder_ncf}/local"
         copy_from         => copy_digest_without_perms("${g.rudder_ncf_origin_local}"),
-        depth_search      => recurse_ignore("inf", @{g.excludedreps}),
+        depth_search      => recurse_ignore("inf", @{g.ncf_local_excludedreps}),
         perms             => u_mog("644", "root", "root"),
         action            => immediate,
         move_obstructions => "true",
@@ -236,6 +241,7 @@ bundle agent update_action
       "${g.rudder_tools}"
         copy_from         => remote_unsecured("${server_info.cfserved}", "${g.rudder_tools_origin}"),
         depth_search      => recurse_ignore("inf", @{g.excludedreps}),
+        file_select       => by_fullname(@{rudder_tools_files_to_select}),
         action            => immediate,
         move_obstructions => "true",
         classes           => success("rudder_tools_updated", "rudder_tools_update_error", "rudder_tools_updated_ok");
@@ -284,6 +290,9 @@ bundle agent update_reports
     no_update::
       "@@Common@@result_error@@hasPolicyServer-root@@common-root@@00@@Update@@None@@${g.execRun}##${g.uuid}@#Cannot update node's policy (CFEngine promises)";
 
+    rudder_tools_updated_error::
+      "@@Common@@result_error@@hasPolicyServer-root@@common-root@@00@@Update@@None@@${g.execRun}##${g.uuid}@#Cannot update Rudder tools last updated file";
+
     rudder_tools_update_error::
       "@@Common@@result_error@@hasPolicyServer-root@@common-root@@00@@Update@@None@@${g.execRun}##${g.uuid}@#Cannot update Rudder tools";
 
@@ -296,7 +305,15 @@ bundle agent update_reports
     rudder_promises_generated_error::
       "@@Common@@result_error@@hasPolicyServer-root@@common-root@@00@@Update@@None@@${g.execRun}##${g.uuid}@#Cannot update node's policy";
 
-    (rudder_promises_generated_ok|(rudder_tools_updated_ok.rudder_ncf_common_updated_ok.rudder_ncf_local_updated_ok.config_ok)).!(rudder_promises_generated_repaired|rudder_promises_generated_error|rudder_tools_updated|rudder_tools_update_error|rudder_ncf_common_updated|rudder_ncf_common_update_error|rudder_ncf_local_updated|rudder_ncf_local_update_error|config|no_update)::
+    # Success report relies on several matching conditions
+    # On all nodes:
+    #   - Simple test: rudder_ncf_common_updated_ok
+    #   - Simple test: rudder_ncf_local_updated_ok
+    #   - Staggered update: rudder_tools_updated_kept OR (rudder_tools_updated_repaired AND rudder_tools_updated_ok)
+    # On all nodes except root server: rudder_promises_generated_ok OR (rudder_promises_generated_repaired AND config_ok)
+    #   - Staggered update: rudder_promises_generated_ok OR (rudder_promises_generated_repaired AND config_ok)
+    # There must be NO components in repair or error
+    rudder_ncf_common_updated_ok.rudder_ncf_local_updated_ok.(rudder_tools_updated_kept|(rudder_tools_updated_repaired.rudder_tools_updated_ok)).(root_server|rudder_promises_generated_ok|(rudder_promises_generated_repaired.config_ok)).!(rudder_promises_generated_repaired|rudder_promises_generated_error|rudder_tools_updated_error|rudder_tools_updated|rudder_tools_update_error|rudder_ncf_common_updated|rudder_ncf_common_update_error|rudder_ncf_local_updated|rudder_ncf_local_update_error|config|no_update)::
       "@@Common@@result_success@@hasPolicyServer-root@@common-root@@00@@Update@@None@@${g.execRun}##${g.uuid}@#Rudder policy, tools and ncf instance are already up to date. No action required.";
 
     rudder_tools_updated::
@@ -311,7 +328,7 @@ bundle agent update_reports
     config::
       "@@Common@@log_repaired@@hasPolicyServer-root@@common-root@@00@@Update@@None@@${g.execRun}##${g.uuid}@#Node's policy (CFEngine promises) updated";
 
-    rudder_promises_generated_repaired|config|rudder_tools_updated|rudder_ncf_common_updated|rudder_ncf_local_updated|server_ok|executor_ok::
+    (config|rudder_tools_updated|rudder_ncf_common_updated|rudder_ncf_local_updated|server_ok|executor_ok).!(rudder_promises_generated_error|rudder_tools_updated_error|rudder_tools_update_error|rudder_ncf_common_update_error|rudder_ncf_local_update_error|no_update)::
       "@@Common@@result_repaired@@hasPolicyServer-root@@common-root@@00@@Update@@None@@${g.execRun}##${g.uuid}@#Policy or dependencies were updated or CFEngine service restarted";
 
 }

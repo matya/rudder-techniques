@@ -33,7 +33,6 @@ bundle server access_rules
   # Access rules are only defined on a policy server. Standard nodes should not share any files.
   access:
 
-&if(MANAGED_NODES_NAME)&
     policy_server|role_rudder_relay_promises_only::
       &if(NOVA)&
       "&UUID&"
@@ -52,6 +51,7 @@ bundle server access_rules
         maproot => {  @{def.acl}  },
         admit   => {  @{def.acl}  };
 
+&if(MANAGED_NODES_NAME)&
       "${g.rudder_ncf_origin_common}"
         maproot => {  @{def.acl}  },
         admit   => {  @{def.acl}  };
@@ -59,6 +59,10 @@ bundle server access_rules
       "${g.rudder_ncf_origin_local}"
         maproot => {  @{def.acl}  },
         admit   => {  @{def.acl}  };
+
+      # Deny access to 50_techniques folder
+      "${g.rudder_ncf_origin_local}/50_techniques"
+        deny    => {  ".*"  };
 
       &if(SHARED_FILES_FOLDER)&
       "&SHARED_FILES_FOLDER&"
@@ -99,7 +103,7 @@ bundle server access_rules
 &endif&
     policy_server_set::
       # Allow server to remotely run the agent
-      "/var/rudder/cfengine-community/bin/cf-agent"
+      "${sys.workdir}/bin/cf-agent"
         admit   => { host2ip("${server_info.cfserved}"), string_downcase(escape("${server_info.cfserved}")) };
 
   &if(NOVA)&
