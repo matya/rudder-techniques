@@ -144,8 +144,12 @@ bundle agent update_action
 
       "client_inputs"        string => "${sys.workdir}/inputs";  #where to put the files on the client when downloaded
 
+      # Tools to copy - all defined in bundle g + the timestamp file (for our two phase update needs, see below)
+      "rudder_tools_files_to_copy"      slist => { "${g.rudder_tools_updated_filename}", @{g.rudder_tools_files} }, policy => "ifdefined";
+      "rudder_tools_files_to_select"    slist => maplist("${g.rudder_tools_origin}/${this}", @{rudder_tools_files_to_copy}); # file_select needs full path
+
        # The check is in two phase:
-       # First copy rudder_promises_timestamp_tmp from the policy server, and check is it's newer
+       # First copy rudder_promises_timestamp_tmp from the policy server, and check if it's newer
        # (based on the timestamp written in it) than rudder_promises_timestamp.
        # If so, copy all the promises
        "rudder_promises_timestamp"     string => "rudder_promises_generated";
@@ -217,7 +221,7 @@ bundle agent update_action
       "${g.rudder_ncf}/common"
         copy_from         => copy_digest_without_perms("${g.rudder_ncf_origin_common}"),
         depth_search      => recurse_ignore("inf", @{g.excludedreps}),
-        perms             => u_mog("644", "root", "root"),
+        perms             => u_mog("644", "root", "0"),
         action            => immediate,
         move_obstructions => "true",
         classes           => success("rudder_ncf_common_updated", "rudder_ncf_common_update_error", "rudder_ncf_common_updated_ok"),
@@ -225,8 +229,8 @@ bundle agent update_action
 
       "${g.rudder_ncf}/local"
         copy_from         => copy_digest_without_perms("${g.rudder_ncf_origin_local}"),
-        depth_search      => recurse_ignore("inf", @{g.excludedreps}),
-        perms             => u_mog("644", "root", "root"),
+        depth_search      => recurse_ignore("inf", @{g.ncf_local_excludedreps}),
+        perms             => u_mog("644", "root", "0"),
         action            => immediate,
         move_obstructions => "true",
         classes           => success("rudder_ncf_local_updated", "rudder_ncf_local_update_error", "rudder_ncf_local_updated_ok"),
@@ -264,10 +268,10 @@ bundle agent update_action
         classes           => success("config", "no_update", "config_ok");
 
     # We copy ncf on non root server if ncf hash file changed, or if  promises have been updated
-    !root_server.(rudder_promises_generated_repaired|rudder_ncf_hash_update_repaired)::
+    !root_server.(new_promises_available|rudder_ncf_hash_update_repaired)::
       "${g.rudder_ncf}/common"
         copy_from         => remote_unsecured_without_perms("${server_info.cfserved}", "${g.rudder_ncf_origin_common}"),
-        depth_search      => recurse_ignore("inf", @{g.excludedreps}),
+        depth_search      => recurse_ignore("inf", @{g.ncf_common_excludedreps}),
         perms             => u_mog("644", "root", "0"),
         action            => immediate,
         move_obstructions => "true",
@@ -284,17 +288,17 @@ bundle agent update_action
         comment           => "Update the local Rudder ncf instance";
 
     # If the file to check if update are available was updated, but the promises files failed to copy correctly, we must force a new copy of the promises at next run
-    rudder_promises_generated_repaired.!root_server.no_update::
+    new_promises_available.!root_server.no_update::
       "${client_inputs}/${file_to_check_update}"
         delete  => tidy,
         comment => "Deleting ${file_to_check_update} as the policy files couldn't be downloaded";
 
-    (rudder_promises_generated_repaired|rudder_ncf_hash_update_repaired).!root_server.rudder_ncf_common_update_error::
+    (new_promises_available|rudder_ncf_hash_update_repaired).!root_server.rudder_ncf_common_update_error::
       "${g.rudder_ncf}/common/${g.rudder_ncf_hash_file}"
         delete  => tidy,
         comment => "Deleting ${g.rudder_ncf_hash_file} as common ncf files couldn't be downloaded";
 
-    (rudder_promises_generated_repaired|rudder_ncf_hash_update_repaired).!root_server.rudder_ncf_local_update_error::
+    (new_promises_available|rudder_ncf_hash_update_repaired).!root_server.rudder_ncf_local_update_error::
       "${g.rudder_ncf}/local/${g.rudder_ncf_hash_file}"
         delete  => tidy,
         comment => "Deleting ${g.rudder_ncf_hash_file} as custom ncf files couldn't be downloaded";
@@ -320,7 +324,7 @@ bundle agent update_action
       "${g.rudder_tools}"
         copy_from         => remote_unsecured("${server_info.cfserved}", "${g.rudder_tools_origin}"),
         depth_search      => recurse_ignore("inf", @{g.excludedreps}),
-        file_select       => exclude("${rudder_tools_updated_tmp}"),
+        file_select       => by_fullname(@{rudder_tools_files_to_select}),
         action            => immediate,
         move_obstructions => "true",
         classes           => success("rudder_tools_updated", "rudder_tools_update_error", "rudder_tools_updated_ok"),
@@ -378,20 +382,41 @@ bundle agent update_reports
     no_update::
       "any" usebundle => rudder_common_report("Common", "result_error", "&TRACKINGKEY&", "Update", "None", "Cannot update node's policy (CFEngine promises)");
 
-    rudder_tools_update_error|rudder_tools_updated_error::
+    rudder_tools_updated_error::
+      "any" usebundle => rudder_common_report("Common", "result_error", "&TRACKINGKEY&", "Update", "None", "Cannot update Rudder tools last updated file");
+
+    rudder_tools_update_error::
       "any" usebundle => rudder_common_report("Common", "result_error", "&TRACKINGKEY&", "Update", "None", "Cannot update Rudder tools");
 
-    rudder_ncf_common_update_error|rudder_ncf_hash_update_error::
+    rudder_ncf_hash_update_error::
+      "any" usebundle => rudder_common_report("Common", "result_error", "&TRACKINGKEY&", "Update", "None", "Cannot update Rudder ncf update hash file");
+
+    rudder_ncf_common_update_error::
       "any" usebundle => rudder_common_report("Common", "result_error", "&TRACKINGKEY&", "Update", "None", "Cannot update common Rudder ncf instance");
 
-    rudder_ncf_local_update_error|rudder_ncf_hash_update_error::
+    rudder_ncf_local_update_error::
       "any" usebundle => rudder_common_report("Common", "result_error", "&TRACKINGKEY&", "Update", "None", "Cannot update local Rudder ncf instance");
 
     rudder_promises_generated_tmp_file_error::
       "any" usebundle => rudder_common_report("Common", "result_error", "&TRACKINGKEY&", "Update", "None", "Cannot update node's policy");
 
-    (rudder_promises_generated_tmp_file_kept|rudder_tools_updated_kept|(rudder_tools_updated_ok.rudder_ncf_common_updated_ok.rudder_ncf_local_updated_ok.config_ok)).!(rudder_promises_generated_tmp_file_repaired|rudder_promises_generated_tmp_file_error|rudder_tools_updated_repaired|rudder_tools_updated_error|rudder_tools_updated|rudder_tools_update_error|rudder_ncf_common_updated|rudder_ncf_common_update_error|rudder_ncf_local_updated|rudder_ncf_local_update_error|config|no_update|rudder_ncf_hash_update_error|rudder_ncf_hash_update_repaired)::
+    # Success report relies on several matching conditions (nodes except root_server)
+    # On all nodes except root server:
+    #   - Staggered update: rudder_ncf_hash_update_ok OR (rudder_ncf_hash_update_repaired AND rudder_ncf_common_updated_ok AND rudder_ncf_local_updated_ok)
+    #   - Staggered update: rudder_tools_updated_kept OR (rudder_tools_updated_repaired AND rudder_tools_updated_ok)
+    #   - Staggered update: rudder_promises_generated_tmp_file_kept OR (rudder_promises_generated_tmp_file_repaired AND config_ok)
+    # There must be NO components in repair or error
+    # Note: we can't use classes new_promises_available and new_tools_available here because they are local to the update_action bundle
+    !root_server.(rudder_ncf_hash_update_ok|(rudder_ncf_hash_update_repaired.rudder_ncf_common_updated_ok.rudder_ncf_local_updated_ok)).(rudder_tools_updated_kept|(rudder_tools_updated_repaired.rudder_tools_updated_ok)).(rudder_promises_generated_tmp_file_kept|(rudder_promises_generated_tmp_file_repaired.config_ok)).!(rudder_promises_generated_tmp_file_repaired|rudder_promises_generated_tmp_file_error|rudder_tools_updated_error|rudder_tools_updated|rudder_tools_update_error|rudder_ncf_common_updated|rudder_ncf_common_update_error|rudder_ncf_local_updated|rudder_ncf_local_update_error|config|no_update|rudder_ncf_hash_update_error|rudder_ncf_hash_update_repaired)::
       "any" usebundle => rudder_common_report("Common", "result_success", "&TRACKINGKEY&", "Update", "None", "Rudder policy, tools and ncf instance are already up to date. No action required.");
+
+    # Success report relies on several matching conditions (root_server only)
+    # On the root server only:
+    #   - Simple test: rudder_ncf_common_updated_ok
+    #   - Simple test: rudder_ncf_local_updated_ok
+    # There must be NO components in repair or error
+    root_server.rudder_ncf_common_updated_ok.rudder_ncf_local_updated_ok.!(rudder_ncf_common_updated|rudder_ncf_common_update_error|rudder_ncf_local_updated|rudder_ncf_local_update_error)::
+      "any" usebundle => rudder_common_report("Common", "result_success", "&TRACKINGKEY&", "Update", "None", "Rudder ncf instance already up to date on this root server. No action required.");
 
     rudder_tools_updated::
       "any" usebundle => rudder_common_report("Common", "log_repaired", "&TRACKINGKEY&", "Update", "None", "Rudder tools updated");
@@ -405,11 +430,8 @@ bundle agent update_reports
     config::
       "any" usebundle => rudder_common_report("Common", "log_repaired", "&TRACKINGKEY&", "Update", "None", "Node's policy (CFEngine promises) updated");
 
-    rudder_promises_generated_tmp_repaired|rudder_tools_updated_repaired|config|rudder_tools_updated|rudder_ncf_common_updated|rudder_ncf_local_updated|server_ok|executor_ok::
+    (config|rudder_tools_updated|rudder_ncf_common_updated|rudder_ncf_local_updated|server_ok|executor_ok).!(rudder_promises_generated_tmp_file_error|rudder_tools_updated_error|rudder_tools_update_error|rudder_ncf_common_update_error|rudder_ncf_local_update_error|no_update|rudder_ncf_hash_update_error)::
       "any" usebundle => rudder_common_report("Common", "result_repaired", "&TRACKINGKEY&", "Update", "None", "Rudder policy, tools or ncf instance were updated or CFEngine service restarted");
-
-    policy_server::
-      "any" usebundle => rudder_common_report("Common", "result_success", "&TRACKINGKEY&", "Update", "None", "Rudder policy server doesn't need to be updated");
 
 }
 

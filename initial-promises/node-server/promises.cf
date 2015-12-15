@@ -161,12 +161,6 @@ bundle agent check_disable_agent
 ##########################################################
 bundle agent clean_red_button()
 {
-  commands:
-    safe.policy_server::
-      "${sys.workdir}/bin/cf-runagent"
-        args => "-Dsafe",
-        comment => "Propagate the safe information to children";
-
   files:
     safe.policy_server::
       "${g.rudder_var}/share/[a-f0-9A-F\-]+/rules/cfengine-(community|nova)/stopFile"
@@ -177,6 +171,12 @@ bundle agent clean_red_button()
       "${sys.workdir}/inputs/stopFile"
         delete => tidy,
         comment => "Deleting the stop file, cfengine is good to go";
+
+  commands:
+    safe.policy_server::
+      "${sys.workdir}/bin/cf-runagent"
+        args => "-Dsafe",
+        comment => "Propagate the safe information to children";
 
   reports:
     safe::
@@ -380,10 +380,6 @@ body process_select cron_bin
 bundle agent check_cron_daemon
 {
 
-  classes:
-
-    "have_bin_systemctl" expression => fileexists("/bin/systemctl");
-
   vars:
 
     redhat::
@@ -397,6 +393,10 @@ bundle agent check_cron_daemon
 
     have_bin_systemctl::
       "cron_restartcmd" string => "/bin/systemctl restart ${cron_service}";
+
+  classes:
+
+    "have_bin_systemctl" expression => fileexists("/bin/systemctl");
 
   processes:
 
@@ -470,7 +470,7 @@ bundle agent check_binaries_freshness
 
     !android.!nova_edition::
       "${sys.workdir}/bin/${components}"
-        perms => u_p("700"),
+        perms => u_p("755"),
         copy_from => cp("${g.rudder_bin}/${components}", "localhost"),
         classes => kept_if_else("binaries_fresh", "binaries_rotten", "binaries_missing"),
         action => immediate,
